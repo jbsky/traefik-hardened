@@ -1,0 +1,41 @@
+# =====================================================================
+#  traefik-hardened -- tests locaux et CI (le gabarit build-push fait
+#  `up --no-build` sur l'image a tester). En production, l'image tourne
+#  dans un pod k3s pilote par le chart Helm : ce fichier n'est pas un
+#  deploiement.
+#
+#  Les options de securite reproduisent le securityContext de la cible :
+#  rootfs en lecture seule, aucune capacite, no-new-privileges, uid 65532.
+# =====================================================================
+x-common-security: &common-security
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  user: "65532:65532"
+  tmpfs:
+    - /tmp:mode=1777
+    - /data:mode=0750,uid=65532,gid=65532
+    - /plugins-storage:mode=0750,uid=65532,gid=65532
+
+services:
+  traefik:
+    <<: *common-security
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Interpolees meme sans build (up --no-build, logs, down) : jamais de
+      # ${VAR:?}, le garde du Dockerfile fait la regle.
+      args:
+        TRAEFIK_VERSION: ${TRAEFIK_VERSION:-}
+        TRAEFIK_SHA256: ${TRAEFIK_SHA256:-}
+    image: ${IMAGE:-docker.io/jbsky/traefik-hardened:latest}
+    container_name: traefik
+    command: ["traefik", "--configFile=/etc/traefik/traefik.yml"]
+    volumes:
+      - ./conf/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./conf/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8000:8000"

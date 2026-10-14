@@ -1,0 +1,46 @@
+# =====================================================================
+#  Configuration d'ESSAI -- elle n'est PAS livree dans l'image.
+#
+#  L'image ne porte aucune configuration statique, volontairement : Traefik
+#  lit /etc/traefik/traefik.yml tout seul s'il existe, et la cible (chart
+#  Helm sur k3s) le pilote entierement par des arguments. Un fichier
+#  embarque se melerait en silence a ces arguments.
+#
+#  Ce fichier sert a docker-compose et au job `test` de la CI : il active ce
+#  que l'image doit savoir prouver -- /ping (le healthcheck de l'image),
+#  l'API, le dashboard reconstruit, et un routage par le provider fichier.
+# =====================================================================
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+entryPoints:
+  web:
+    address: ":8000"
+  websecure:
+    address: ":8443"
+  traefik:
+    address: ":8080"
+
+# Point de controle interroge par `init --healthcheck` et par les sondes du
+# pod en production.
+ping:
+  entryPoint: traefik
+
+api:
+  dashboard: true
+  # ESSAI UNIQUEMENT : expose l'API et le dashboard sur l'entryPoint
+  # « traefik » sans authentification, pour que le test puisse les lire sans
+  # middleware. En production, `insecure` reste a false et le dashboard passe
+  # par un routeur avec authentification.
+  insecure: true
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: false
+
+log:
+  level: INFO
+
+accessLog: {}

@@ -1,0 +1,13 @@
+# image-manifest v3
+# image : traefik-hardened
+# genere par scripts/image-manifest.py -- ne pas editer a la main
+
+f 0644 0:0 - etc/group
+f 0644 0:0 - etc/image-versions
+f 0644 0:0 - etc/passwd
+f 0755 0:0 elf sbin/tini
+f 0755 0:0 elf usr/local/bin/init
+f 0755 0:0 elf usr/local/bin/traefik
+
+count 2 etc/ssl/
+count 624 usr/share/

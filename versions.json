@@ -1,0 +1,5 @@
+{
+  "traefik": "3.7.14",
+  "traefik_sha256": "a5c89da12e74890a2b3aeecf46756ee853a6e8c1e9e27a04fa1ebdaefc68d4ce",
+  "alpine": "3.24"
+}

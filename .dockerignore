@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+*.md
+docs/
+sbom/
+dist/
+.DS_Store
+*.log
+*.swp
+*~
+docker-compose*.yml
+Makefile
+.hadolint.yaml
+.github/
+scripts/
+conf/

@@ -1,0 +1,16 @@
+# Configuration dynamique d'essai : un routeur qui proxifie vers le /ping de
+# Traefik lui-meme. Pas de service tiers a demarrer, et ca prouve la chaine
+# complete (entryPoint -> routeur -> service -> reponse HTTP).
+http:
+  routers:
+    proxy:
+      rule: "Host(`proxy.test`)"
+      entryPoints:
+        - web
+      service: ping-backend
+
+  services:
+    ping-backend:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080/"

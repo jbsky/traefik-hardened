@@ -1,0 +1,26 @@
+{
+  "image": "traefik-hardened",
+  "version": {
+    "key": "traefik"
+  },
+  "revision": [
+    "traefik",
+    "Dockerfile",
+    "init.go",
+    "go.mod",
+    "versions.json"
+  ],
+  "platforms": [
+    "linux/amd64"
+  ],
+  "compose_service": "traefik",
+  "probes": [
+    {
+      "label": "Traefik",
+      "want": "version",
+      "cmd": "docker run --rm --entrypoint /usr/local/bin/traefik \"$IMAGE\" version",
+      "regex": "Version:\\s+\\K[0-9][0-9.]*"
+    }
+  ],
+  "smoke": "./scripts/test.sh \"$IMAGE\""
+}

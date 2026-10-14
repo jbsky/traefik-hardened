@@ -1,0 +1,88 @@
+# =====================================================================
+#  Version Watch -- Traefik Hardened
+#  Quotidien : signale une version amont plus recente, NE LA POSE PAS.
+#
+#  Ecart volontaire aux depots du parc dont la veille reecrit versions.json
+#  et relance le build : cette image est l'INGRESS de la cible -- tout ce qui
+#  est publie ici finit devant tous les services. Une montee se decide, se
+#  lit (notes de version) et se deploie a la main. Le sha256 de l'archive
+#  source doit de toute facon etre recalcule dans le MEME commit que la
+#  version : il est annonce ici pour que le commit soit immediat.
+#
+#  Deux comparaisons, parce qu'elles n'ont pas le meme poids :
+#    - dernier correctif de la MEME mineure : a prendre, c'est du correctif ;
+#    - derniere version tout court : une mineure de plus, donc une lecture
+#      des notes de version avant quoi que ce soit.
+# =====================================================================
+name: version-watch
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check upstream versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare with upstream releases
+        id: compare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          current=$(jq -r '.traefik' versions.json)
+          branche="${current%.*}"
+          # Les 100 dernieres releases suffisent : l'amont en publie ~2 par
+          # mois et par branche. Pas de `releases/latest` seul : il ne dit
+          # rien de la branche epinglee.
+          tags=$(gh api "repos/traefik/traefik/releases?per_page=100" --jq '.[] | select(.prerelease == false) | .tag_name')
+          test -n "$tags" || { echo "::error::aucune release lue sur traefik/traefik"; exit 1; }
+          dernier_branche=$(printf '%s\n' "$tags" | grep -E "^v${branche}\.[0-9]+$" | sort -V | tail -1 | sed 's/^v//' || true)
+          dernier=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 | sed 's/^v//')
+          {
+            echo "- versions.json : ${current} (branche ${branche})"
+            echo "- dernier correctif de ${branche} : ${dernier_branche:-aucun}"
+            echo "- derniere version amont : ${dernier}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          report=""
+          if [ -n "${dernier_branche}" ] && [ "${dernier_branche}" != "${current}" ]; then
+            report="${report}- **correctif** ${current} -> ${dernier_branche} (https://github.com/traefik/traefik/releases/tag/v${dernier_branche})"$'\n'
+          fi
+          if [ "${dernier}" != "${current}" ] && [ "${dernier}" != "${dernier_branche:-}" ]; then
+            report="${report}- **mineure** ${current} -> ${dernier} : lire les notes de version avant (https://github.com/traefik/traefik/releases/tag/v${dernier})"$'\n'
+          fi
+          {
+            echo "report<<EOF"
+            printf '%s' "$report"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update issue
+        if: steps.compare.outputs.report != ''
+        uses: actions/github-script@v9
+        env:
+          REPORT: ${{ steps.compare.outputs.report }}
+        with:
+          script: |
+            const title = '[Veille] Version amont de Traefik disponible';
+            const body = `${process.env.REPORT}\nMontee : versions.json (version ET sha256 de `
+              + `traefik-v<version>.src.tar.gz dans le MEME commit), \`make build\`, `
+              + `\`scripts/test.sh\`, \`image-manifest.py --generate\`, puis deploiement manuel.`;
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 50,
+            });
+            const existing = open.data.find(i => i.title === title);
+            if (!existing) {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
+            } else if (existing.body !== body) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+            }
