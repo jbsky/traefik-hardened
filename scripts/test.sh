@@ -14,8 +14,17 @@
 #    6. aucun shell, aucune bibliotheque partagee, un uid non nul ;
 #    7. une configuration cassee EMPECHE le demarrage ;
 #    8. sans volume inscriptible, l'init DIT pourquoi un plugin echouerait.
+#
+#  Avant tout cela, scripts/test_journal.sh eprouve l'outil qui lit les
+#  journaux des conteneurs : un faux ECHEC de cette sonde a deja fait
+#  passer une image saine pour cassee (2026-10-22).
 # =====================================================================
 set -euo pipefail
+
+ICI=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=journal.sh
+. "$ICI/journal.sh"
 
 IMAGE="${1:?usage: test.sh <image>}"
 NOM="traefik-test-$$"
@@ -25,6 +34,14 @@ trap 'docker rm -f "$NOM" "$NOM-ko" "$NOM-plug" >/dev/null 2>&1 || true; rm -rf 
 
 ok() { printf '  OK     %s\n' "$*"; }
 ko() { printf '  ECHEC  %s\n' "$*" >&2; docker logs "$NOM" 2>&1 | tail -30 >&2 || true; exit 1; }
+# `$(...)` puis coupe a la premiere ligne, jamais `| head -1` : head sort
+# des la premiere ligne et l'ecrivain meurt de SIGPIPE (141), fatal sous
+# `pipefail` -- meme piege que `| grep -q` (cf. scripts/journal.sh).
+premiere_ligne() { printf '%s' "${1%%$'\n'*}"; }
+
+# L'outil de lecture de journal d'abord : c'est lui qui a rendu un faux
+# ECHEC le 2026-10-22, et il porte la sonde des plugins plus bas.
+"$ICI/test_journal.sh"
 
 VERSION=$(python3 -c 'import json;print(json.load(open("versions.json"))["traefik"])')
 
@@ -110,9 +127,9 @@ done
 docker exec "$NOM" /usr/local/bin/init --healthcheck >/dev/null 2>&1 || ko "healthcheck (/ping)"
 ok "healthcheck de l'image (/ping)"
 
-API=$(docker port "$NOM" 8080/tcp | head -1)
-WEB=$(docker port "$NOM" 8000/tcp | head -1)
-TLS=$(docker port "$NOM" 8443/tcp | head -1)
+API=$(premiere_ligne "$(docker port "$NOM" 8080/tcp)")
+WEB=$(premiere_ligne "$(docker port "$NOM" 8000/tcp)")
+TLS=$(premiere_ligne "$(docker port "$NOM" 8443/tcp)")
 
 [ "$(curl -fsS --noproxy '*' -o /dev/null -w '%{http_code}' "http://$API/ping")" = 200 ] || ko "/ping"
 ok "/ping repond 200 depuis l'hote"
@@ -127,7 +144,7 @@ HTML=$(curl -fsS --noproxy '*' "http://$API/dashboard/")
 grep -q '<div id="root"' <<<"$HTML" || ko "/dashboard/ ne rend pas l'application (actifs non embarques ?)"
 # Le chemin est RELATIF (`./assets/index-<hash>.js`) : l'amont construit avec
 # VITE_APP_BASE_URL vide, donc la page marche sous n'importe quel prefixe.
-ASSET=$(grep -oE 'assets/[A-Za-z0-9._-]+\.js' <<<"$HTML" | head -1)
+ASSET=$(grep -m1 -oE 'assets/[A-Za-z0-9._-]+\.js' <<<"$HTML")
 [ -n "$ASSET" ] || ko "aucun actif JavaScript reference par le dashboard"
 TAILLE=$(curl -fsS --noproxy '*' -o /dev/null -w '%{size_download}' "http://$API/dashboard/${ASSET}")
 [ "$TAILLE" -gt 100000 ] || ko "l'actif $ASSET ne pese que $TAILLE octets"
@@ -190,10 +207,10 @@ docker run -d --name "$NOM-plug" \
   --experimental.plugins.demo.moduleName=github.com/exemple/demo \
   --experimental.plugins.demo.version=v0.0.1 >/dev/null
 for _ in $(seq 1 10); do
-  docker logs "$NOM-plug" 2>&1 | grep -q 'plugins-storage' && break
+  journal_contient "$NOM-plug" 'plugins-storage' && break
   sleep 1
 done
-docker logs "$NOM-plug" 2>&1 | grep -q "WARNING: /plugins-storage n'est pas inscriptible" \
+journal_contient "$NOM-plug" "WARNING: /plugins-storage n'est pas inscriptible" \
   || ko "l'init n'avertit pas sur /plugins-storage non inscriptible"
 ok "avertissement clair quand /plugins-storage n'est pas inscriptible"
 
