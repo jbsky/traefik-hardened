@@ -33,7 +33,18 @@ chmod 755 "$TMP"
 trap 'docker rm -f "$NOM" "$NOM-ko" "$NOM-plug" >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
 
 ok() { printf '  OK     %s\n' "$*"; }
-ko() { printf '  ECHEC  %s\n' "$*" >&2; docker logs "$NOM" 2>&1 | tail -30 >&2 || true; exit 1; }
+# ko <message> [conteneur] -- le journal verse est celui du conteneur FAUTIF.
+# Sans deuxieme argument c'est le conteneur principal. Le dire a l'appel,
+# sinon un echec sur "$NOM-ko" ou "$NOM-plug" se lit avec le journal d'un
+# conteneur qui, lui, va bien : le run 39784521199 avait l'air de manquer
+# l'avertissement des plugins, il montrait juste un autre conteneur.
+ko() {
+  printf '  ECHEC  %s\n' "$1" >&2
+  local cible=${2:-$NOM}
+  printf '  -- journal de %s (30 dernieres lignes) --\n' "$cible" >&2
+  journal "$cible" | tail -30 >&2
+  exit 1
+}
 # `$(...)` puis coupe a la premiere ligne, jamais `| head -1` : head sort
 # des la premiere ligne et l'ecrivain meurt de SIGPIPE (141), fatal sous
 # `pipefail` -- meme piege que `| grep -q` (cf. scripts/journal.sh).
@@ -192,8 +203,8 @@ for _ in $(seq 1 15); do
   sleep 1
 done
 ETAT=$(docker inspect -f '{{.State.Status}} {{.State.ExitCode}}' "$NOM-ko")
-[ "$ETAT" = "exited 0" ] && ko "une configuration cassee a demarre puis rendu 0"
-case "$ETAT" in exited\ *) ;; *) ko "une configuration cassee tourne toujours ($ETAT)" ;; esac
+[ "$ETAT" = "exited 0" ] && ko "une configuration cassee a demarre puis rendu 0" "$NOM-ko"
+case "$ETAT" in exited\ *) ;; *) ko "une configuration cassee tourne toujours ($ETAT)" "$NOM-ko" ;; esac
 ok "configuration cassee refusee au demarrage ($ETAT)"
 
 # Plugin demande, mais /plugins-storage non inscriptible (rootfs en lecture
@@ -211,7 +222,7 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 journal_contient "$NOM-plug" "WARNING: /plugins-storage n'est pas inscriptible" \
-  || ko "l'init n'avertit pas sur /plugins-storage non inscriptible"
+  || ko "l'init n'avertit pas sur /plugins-storage non inscriptible" "$NOM-plug"
 ok "avertissement clair quand /plugins-storage n'est pas inscriptible"
 
 echo "== tous les tests passent"
