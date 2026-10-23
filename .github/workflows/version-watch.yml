@@ -66,21 +66,39 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Open or update issue
-        if: steps.compare.outputs.report != ''
+      # Un seul chemin pour les deux cas : la veille OUVRE quand il y a un
+      # ecart, et FERME quand il n'y en a plus. Sans la fermeture, l'issue
+      # survit a la montee qu'elle demandait et le depot garde une issue
+      # ouverte qui ment (constate le 2026-10-23 : #2 toujours ouverte apres
+      # la publication de 3.7.16, qu'elle reclamait).
+      - name: Open, update or close the issue
         uses: actions/github-script@v9
         env:
           REPORT: ${{ steps.compare.outputs.report }}
         with:
           script: |
             const title = '[Veille] Version amont de Traefik disponible';
-            const body = `${process.env.REPORT}\nMontee : versions.json (version ET sha256 de `
-              + `traefik-v<version>.src.tar.gz dans le MEME commit), \`make build\`, `
-              + `\`scripts/test.sh\`, \`image-manifest.py --generate\`, puis deploiement manuel.`;
+            const report = process.env.REPORT;
             const open = await github.rest.issues.listForRepo({
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 50,
             });
             const existing = open.data.find(i => i.title === title);
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            if (!report) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number,
+                  body: `versions.json est a jour : plus aucun ecart avec l'amont.\n\n[Execution](${run})`,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, state: 'closed',
+                });
+              }
+              return;
+            }
+            const body = `${report}\nMontee : versions.json (version ET sha256 de `
+              + `traefik-v<version>.src.tar.gz dans le MEME commit), \`make build\`, `
+              + `\`scripts/test.sh\`, \`image-manifest.py --generate\`, puis deploiement manuel.`;
             if (!existing) {
               await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
             } else if (existing.body !== body) {
