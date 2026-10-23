@@ -60,7 +60,7 @@ le tag qui porte le compteur.**
 <!-- BEGIN:tags (genere par la CI -- ne pas editer a la main) -->
 | Image | Version amont | Tag immuable a epingler |
 |-------|---------------|-------------------------|
-| `jbsky/traefik-hardened` | `3.7.14` | `3.7.14.2` |
+| `jbsky/traefik-hardened` | `3.7.14` | `3.7.14.3` |
 <!-- END:tags -->
 
 Le compteur compte les commits qui touchent les entrees de l'image
