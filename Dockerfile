@@ -24,7 +24,7 @@ ARG TRAEFIK_SHA256
 # ---------------------------------------------------------------------
 #  fetch : archive source verifiee, dashboard prefabrique jete
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 AS fetch
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS fetch
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TRAEFIK_VERSION
 ARG TRAEFIK_SHA256
@@ -62,7 +62,7 @@ RUN test -s traefik/webui/static/index.html \
 # ---------------------------------------------------------------------
 #  web : dashboard construit depuis les sources du tag
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 AS web
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS web
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 RUN --mount=type=secret,id=ca-certs,target=/tmp/ca-bundle.crt,required=false \
     if [ -f /tmp/ca-bundle.crt ]; then \
@@ -127,7 +127,7 @@ RUN if [ -n "${HTTP_PROXY:-}" ]; then export YARN_HTTP_PROXY="${HTTP_PROXY}"; fi
 #  dans une image qui n'a aujourd'hui AUCUNE bibliotheque -- un plus mauvais
 #  echange que l'ASLR gagnee. Le binaire reste statique, comme chez l'amont.
 # ---------------------------------------------------------------------
-FROM golang:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4 AS builder
+FROM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TRAEFIK_VERSION
 RUN test -n "${TRAEFIK_VERSION}" \
@@ -185,7 +185,7 @@ RUN sortie="$(/out/traefik version)" \
 # ---------------------------------------------------------------------
 #  gobuilder : init statique (entrypoint, healthcheck, setup-dirs)
 # ---------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4 AS gobuilder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS gobuilder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /build
@@ -196,7 +196,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags
 #  prep : utilisateur, autorites, fuseaux -- et les assertions sur le binaire
 #  Le gabarit build-push construit et scanne ce stage a part (Trivy, SBOM).
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:71e9b7bae160ba167fa17414401b94cbcdaf3c32feeab9298bd794a2a0614c35 AS prep
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS prep
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # Rien de plus que ce que l'image finale emporte : ce stage est celui que la
 # CI scanne (Trivy, SBOM attestee), et chaque paquet de plus y ajoute des CVE
