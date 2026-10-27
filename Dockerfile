@@ -127,7 +127,7 @@ RUN if [ -n "${HTTP_PROXY:-}" ]; then export YARN_HTTP_PROXY="${HTTP_PROXY}"; fi
 #  dans une image qui n'a aujourd'hui AUCUNE bibliotheque -- un plus mauvais
 #  echange que l'ASLR gagnee. Le binaire reste statique, comme chez l'amont.
 # ---------------------------------------------------------------------
-FROM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS builder
+FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TRAEFIK_VERSION
 RUN test -n "${TRAEFIK_VERSION}" \
@@ -185,7 +185,7 @@ RUN sortie="$(/out/traefik version)" \
 # ---------------------------------------------------------------------
 #  gobuilder : init statique (entrypoint, healthcheck, setup-dirs)
 # ---------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS gobuilder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS gobuilder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /build
