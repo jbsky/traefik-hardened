@@ -8,7 +8,9 @@
     "Dockerfile",
     "init.go",
     "go.mod",
-    "versions.json"
+    "versions.json",
+    "go-overrides.json",
+    "scripts/go-overrides-apply.sh"
   ],
   "platforms": [
     "linux/amd64"

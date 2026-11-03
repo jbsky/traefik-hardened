@@ -16,6 +16,7 @@ on:
       - 'versions.json'
       - 'init.go'
       - 'go.mod'
+      - 'go-overrides.json'
       - 'image.manifest'
       - 'conf/**'
       - 'scripts/**'

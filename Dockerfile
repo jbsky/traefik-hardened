@@ -149,6 +149,18 @@ WORKDIR /src/traefik
 ENV CGO_ENABLED=0 \
     GOTOOLCHAIN=local \
     GOFLAGS=-mod=readonly
+
+# Overrides de securite (go-overrides.json, cf. SECURITY.md) : un module Go
+# VENDU par l'amont (le source de Traefik qu'on compile, pas notre init.go)
+# n'est touche ni par le digest golang ni par une reconstruction simple --
+# scripts/go-cve-autofix.js (workflow go-cve-watch.yml, local a ce depot) y
+# repond en forcant ici la version corrigee. `go get` passe par go.sum et
+# sum.golang.org (meme garantie d'integrite que le reste du module) ;
+# -mod=mod seulement pour cette commande, le reste du build reste readonly.
+COPY go-overrides.json scripts/go-overrides-apply.sh /tmp/overrides/
+RUN apk add --no-cache jq \
+ && GOFLAGS=-mod=mod /tmp/overrides/go-overrides-apply.sh apply /tmp/overrides/go-overrides.json
+
 # Codename non fourni : l'amont le passe par une variable de sa chaine de
 # release, absente des sources. Le defaut du code (« cheddar ») s'applique,
 # comme dans le paquet Alpine.
@@ -181,6 +193,13 @@ RUN apk add --no-cache file \
 RUN sortie="$(/out/traefik version)" \
  && echo "${sortie}" \
  && echo "${sortie}" | grep -E "^Version:[[:space:]]+${TRAEFIK_VERSION}$" > /dev/null
+
+# Preuve que chaque override a reellement atteint le binaire compile :
+# `go version -m` lit exactement le meme buildinfo que Trivy (cf.
+# go-cve-watch.yml), donc la verification la plus proche du defaut qu'une
+# CVE Go corrige. /tmp/overrides n'est range qu'ici : verify en a besoin.
+RUN /tmp/overrides/go-overrides-apply.sh verify /tmp/overrides/go-overrides.json /out/traefik \
+ && rm -rf /tmp/overrides
 
 # ---------------------------------------------------------------------
 #  gobuilder : init statique (entrypoint, healthcheck, setup-dirs)
