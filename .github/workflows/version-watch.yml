@@ -1,18 +1,15 @@
 # =====================================================================
 #  Version Watch -- Traefik Hardened
-#  Quotidien : signale une version amont plus recente, NE LA POSE PAS.
+#  Quotidien : monte versions.json vers la derniere version amont et
+#  republie -- plus de main humaine (garde-fou retire sur demande explicite,
+#  les sauvegardes couvrent le risque residuel).
 #
-#  Ecart volontaire aux depots du parc dont la veille reecrit versions.json
-#  et relance le build : cette image est l'INGRESS de la cible -- tout ce qui
-#  est publie ici finit devant tous les services. Une montee se decide, se
-#  lit (notes de version) et se deploie a la main. Le sha256 de l'archive
-#  source doit de toute facon etre recalcule dans le MEME commit que la
-#  version : il est annonce ici pour que le commit soit immediat.
+#  Meme chaine que base-watch, qui l'a eprouvee : bump -> commit -> push ->
+#  dispatch de build-push. Un push fait avec GITHUB_TOKEN ne declenche aucun
+#  `on: push` (garde anti-recursion de GitHub), d'ou le dispatch explicite.
 #
-#  Deux comparaisons, parce qu'elles n'ont pas le meme poids :
-#    - dernier correctif de la MEME mineure : a prendre, c'est du correctif ;
-#    - derniere version tout court : une mineure de plus, donc une lecture
-#      des notes de version avant quoi que ce soit.
+#  Le sha256 de l'archive source est recalcule dans le MEME commit que la
+#  version : jamais une valeur devinee ou recopiee.
 # =====================================================================
 name: version-watch
 
@@ -20,6 +17,11 @@ on:
   schedule:
     - cron: '0 6 * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Relever l'ecart et s'arreter la (ni commit, ni push, ni publication)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,80 +29,92 @@ permissions:
 
 jobs:
   check:
-    name: Check upstream versions
+    name: Monter vers la derniere version amont
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      actions: write
     steps:
       - uses: actions/checkout@v7
 
-      - name: Compare with upstream releases
-        id: compare
+      - name: Comparer et monter si besoin
+        id: bump
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           current=$(jq -r '.traefik' versions.json)
-          branche="${current%.*}"
           # Les 100 dernieres releases suffisent : l'amont en publie ~2 par
-          # mois et par branche. Pas de `releases/latest` seul : il ne dit
-          # rien de la branche epinglee.
+          # mois. La plus haute de toutes (patch ou mineure confondus) est
+          # la cible -- une mineure ne s'attend plus a une lecture humaine
+          # des notes de version.
           tags=$(gh api "repos/traefik/traefik/releases?per_page=100" --jq '.[] | select(.prerelease == false) | .tag_name')
           test -n "$tags" || { echo "::error::aucune release lue sur traefik/traefik"; exit 1; }
-          dernier_branche=$(printf '%s\n' "$tags" | grep -E "^v${branche}\.[0-9]+$" | sort -V | tail -1 | sed 's/^v//' || true)
-          dernier=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 | sed 's/^v//')
+          cible=$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 | sed 's/^v//')
           {
-            echo "- versions.json : ${current} (branche ${branche})"
-            echo "- dernier correctif de ${branche} : ${dernier_branche:-aucun}"
-            echo "- derniere version amont : ${dernier}"
+            echo "- versions.json : ${current}"
+            echo "- derniere version amont : ${cible}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          report=""
-          if [ -n "${dernier_branche}" ] && [ "${dernier_branche}" != "${current}" ]; then
-            report="${report}- **correctif** ${current} -> ${dernier_branche} (https://github.com/traefik/traefik/releases/tag/v${dernier_branche})"$'\n'
+          if [ "${cible}" = "${current}" ]; then
+            echo "a_jour=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          if [ "${dernier}" != "${current}" ] && [ "${dernier}" != "${dernier_branche:-}" ]; then
-            report="${report}- **mineure** ${current} -> ${dernier} : lire les notes de version avant (https://github.com/traefik/traefik/releases/tag/v${dernier})"$'\n'
-          fi
-          {
-            echo "report<<EOF"
-            printf '%s' "$report"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "a_jour=false" >> "$GITHUB_OUTPUT"
+          echo "cible=${cible}" >> "$GITHUB_OUTPUT"
 
-      # Un seul chemin pour les deux cas : la veille OUVRE quand il y a un
-      # ecart, et FERME quand il n'y en a plus. Sans la fermeture, l'issue
-      # survit a la montee qu'elle demandait et le depot garde une issue
-      # ouverte qui ment (constate le 2026-10-23 : #2 toujours ouverte apres
-      # la publication de 3.7.16, qu'elle reclamait).
-      - name: Open, update or close the issue
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "--dry-run : ${current} -> ${cible}, rien ecrit."
+            exit 0
+          fi
+
+          tarball="${RUNNER_TEMP}/traefik.tar.gz"
+          curl -fsSL "https://github.com/traefik/traefik/releases/download/v${cible}/traefik-v${cible}.src.tar.gz" -o "$tarball"
+          sha256=$(sha256sum "$tarball" | cut -d' ' -f1)
+
+          jq --arg v "$cible" --arg h "$sha256" '.traefik = $v | .traefik_sha256 = $h' versions.json > "${RUNNER_TEMP}/versions.json"
+          mv "${RUNNER_TEMP}/versions.json" versions.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add versions.json
+          git commit -m "build(traefik): ${current} -> ${cible}" \
+            -m "Montee automatique (version-watch). sha256 de traefik-v${cible}.src.tar.gz recalcule dans ce commit."
+          pousse=false
+          for essai in 1 2 3; do
+            if git push; then pousse=true; break; fi
+            echo "push refuse (essai ${essai}) -- rebase sur l'origine"
+            git pull --rebase --autostash
+          done
+          if [ "$pousse" != true ]; then
+            echo "::error::push impossible apres 3 essais"
+            exit 1
+          fi
+          gh workflow run build-push.yml --ref main -R "$GITHUB_REPOSITORY"
+
+      # Un seul chemin pour les deux cas : la veille ferme l'issue si elle
+      # vient de monter (ou si l'ecart a disparu sans elle), et n'en ouvre
+      # plus jamais une qui demanderait une action humaine deja faite.
+      - name: Fermer l'issue de veille si elle est encore ouverte
+        if: steps.bump.outputs.a_jour == 'true' || steps.bump.outputs.cible != ''
         uses: actions/github-script@v9
         env:
-          REPORT: ${{ steps.compare.outputs.report }}
+          A_JOUR: ${{ steps.bump.outputs.a_jour }}
+          CIBLE: ${{ steps.bump.outputs.cible }}
+          DRY_RUN: ${{ inputs.dry_run }}
         with:
           script: |
+            if (process.env.DRY_RUN === 'true') return;
             const title = '[Veille] Version amont de Traefik disponible';
-            const report = process.env.REPORT;
             const open = await github.rest.issues.listForRepo({
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', per_page: 50,
             });
             const existing = open.data.find(i => i.title === title);
+            if (!existing) return;
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            if (!report) {
-              if (existing) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number,
-                  body: `versions.json est a jour : plus aucun ecart avec l'amont.\n\n[Execution](${run})`,
-                });
-                await github.rest.issues.update({
-                  owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, state: 'closed',
-                });
-              }
-              return;
-            }
-            const body = `${report}\nMontee : versions.json (version ET sha256 de `
-              + `traefik-v<version>.src.tar.gz dans le MEME commit), \`make build\`, `
-              + `\`scripts/test.sh\`, \`image-manifest.py --generate\`, puis deploiement manuel.`;
-            if (!existing) {
-              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo, title, body });
-            } else if (existing.body !== body) {
-              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
-            }
+            const body = process.env.A_JOUR === 'true'
+              ? `versions.json est a jour : plus aucun ecart avec l'amont.\n\n[Execution](${run})`
+              : `Montee automatique vers ${process.env.CIBLE} declenchee : ${run}`;
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, body });
+            await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number, state: 'closed' });
