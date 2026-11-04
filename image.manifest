@@ -10,4 +10,5 @@ f 0755 0:0 elf usr/local/bin/init
 f 0755 0:0 elf usr/local/bin/traefik
 
 count 2 etc/ssl/
+count 34 plugins-local/
 count 624 usr/share/
