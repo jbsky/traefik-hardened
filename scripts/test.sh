@@ -13,7 +13,12 @@
 #    5. une terminaison TLS reelle, avec le certificat fourni ;
 #    6. aucun shell, aucune bibliotheque partagee, un uid non nul ;
 #    7. une configuration cassee EMPECHE le demarrage ;
-#    8. sans volume inscriptible, l'init DIT pourquoi un plugin echouerait.
+#    8. sans volume inscriptible, l'init DIT pourquoi un plugin echouerait ;
+#    9. le bouncer CrowdSec (experimental.localPlugins) charge et fonctionne
+#       SANS AUCUN RESEAU -- c'est ce qui manque a experimental.plugins
+#       (catalogue distant), qui retelecharge a chaque demarrage et a casse
+#       toute la chaine WAF en prod le 2026-11-04 (reboot du noeud, proxy pas
+#       encore joignable).
 #
 #  Avant tout cela, scripts/test_journal.sh eprouve l'outil qui lit les
 #  journaux des conteneurs : un faux ECHEC de cette sonde a deja fait
@@ -30,7 +35,10 @@ IMAGE="${1:?usage: test.sh <image>}"
 NOM="traefik-test-$$"
 TMP=$(mktemp -d)
 chmod 755 "$TMP"
-trap 'docker rm -f "$NOM" "$NOM-ko" "$NOM-plug" >/dev/null 2>&1 || true; rm -rf "$TMP"' EXIT
+RESEAU_ISOLE="traefik-test-isole-$$"
+trap 'docker rm -f "$NOM" "$NOM-ko" "$NOM-plug" "$NOM-local" >/dev/null 2>&1 || true
+      docker network rm "$RESEAU_ISOLE" >/dev/null 2>&1 || true
+      rm -rf "$TMP"' EXIT
 
 ok() { printf '  OK     %s\n' "$*"; }
 # ko <message> [conteneur] -- le journal verse est celui du conteneur FAUTIF.
@@ -224,5 +232,85 @@ done
 journal_contient "$NOM-plug" "WARNING: /plugins-storage n'est pas inscriptible" \
   || ko "l'init n'avertit pas sur /plugins-storage non inscriptible" "$NOM-plug"
 ok "avertissement clair quand /plugins-storage n'est pas inscriptible"
+
+# Reseau INTERNE (pas --network none, qui empeche aussi la publication de
+# ports -v et l'image n'a ni shell ni curl pour un docker exec) : zero route
+# de sortie, mais l'hote atteint toujours l'IP du conteneur sur le bridge
+# local. C'est la seule facon de prouver "sans reseau" sans changer de
+# proprietes testees.
+mkdir -p "$TMP/local"
+docker network create --internal "$RESEAU_ISOLE" >/dev/null
+cat > "$TMP/local/traefik.yml" <<'CFG'
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+entryPoints:
+  web:
+    address: ":8000"
+  traefik:
+    address: ":8080"
+ping:
+  entryPoint: traefik
+api:
+  insecure: true
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+log:
+  level: INFO
+experimental:
+  localPlugins:
+    bouncer:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+CFG
+cat > "$TMP/local/dynamic.yml" <<'CFG'
+http:
+  middlewares:
+    bouncer:
+      plugin:
+        bouncer:
+          enabled: true
+          crowdsecMode: live
+          crowdsecLapiHost: 127.0.0.1:65000
+          crowdsecLapiKey: preflight
+  routers:
+    protege:
+      rule: "Host(`proxy.test`)"
+      entryPoints:
+        - web
+      service: ping-backend
+      middlewares:
+        - bouncer
+  services:
+    ping-backend:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080/"
+CFG
+chmod 644 "$TMP/local"/*.yml; chmod 755 "$TMP/local"
+
+docker run -d --name "$NOM-local" --network "$RESEAU_ISOLE" \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true --user 65532:65532 \
+  --tmpfs /tmp:mode=1777 \
+  -v "$TMP/local:/etc/traefik:ro" \
+  "$IMAGE" traefik --configFile=/etc/traefik/traefik.yml >/dev/null
+
+IP_LOCAL=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$NOM-local")
+for _ in $(seq 1 30); do
+  journal_contient "$NOM-local" "Plugins loaded." && break
+  journal_contient "$NOM-local" "Plugins are disabled" && break
+  sleep 1
+done
+
+journal_contient "$NOM-local" "Plugins are disabled" \
+  && ko "le plugin local ne charge pas sans reseau" "$NOM-local"
+journal_contient "$NOM-local" "Plugins loaded." \
+  || ko "ni « Plugins loaded » ni « Plugins are disabled » : le plugin local n'a pas fini de charger" "$NOM-local"
+ok "bouncer CrowdSec charge (experimental.localPlugins, zero reseau)"
+
+CODE_LOCAL=$(curl -sS --noproxy '*' -o /dev/null -w '%{http_code}' --max-time 5 \
+  -H 'Host: proxy.test' "http://$IP_LOCAL:8000/ping" || true)
+[ "$CODE_LOCAL" = 403 ] || ko "LAPI injoignable devrait fermer a 403, recu : ${CODE_LOCAL:-aucune reponse}" "$NOM-local"
+ok "le plugin s'execute reellement (403, fail-close sur LAPI injoignable)"
 
 echo "== tous les tests passent"

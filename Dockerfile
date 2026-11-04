@@ -60,6 +60,62 @@ RUN test -s traefik/webui/static/index.html \
  && rm -rf traefik/webui/static
 
 # ---------------------------------------------------------------------
+#  plugin : source du bouncer CrowdSec, vendue dans l'image (localPlugins)
+#
+#  Charge jusqu'ici via experimental.plugins (catalogue distant) : Traefik
+#  RETELECHARGE ce plugin a CHAQUE demarrage, meme une archive deja en cache
+#  sous /plugins-storage ne l'evite pas (verifie le 2026-10-14,
+#  bin/k3s-traefik-preflight-plugin.sh, --network none). Un redemarrage dont
+#  le reseau n'est pas encore pret (reboot du noeud, proxy pas remonte)
+#  desactive alors les plugins pour toute la vie du pod -- et le middleware
+#  qui en depend casse TOUTE la chaine WAF (vecu en prod le 2026-11-04,
+#  21 minutes, tous les sites en 404 : jbsky.fr, home.jbsky.fr, mail,
+#  immich...).
+#
+#  experimental.localPlugins fait lire le code par Yaegi depuis le disque :
+#  aucun reseau au demarrage. La source est verifiee ICI, au build, comme le
+#  binaire Traefik lui-meme -- l'amont ne publie ni signature ni somme pour
+#  cette archive non plus.
+# ---------------------------------------------------------------------
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS plugin
+SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
+ARG CROWDSEC_BOUNCER_PLUGIN_VERSION
+ARG CROWDSEC_BOUNCER_PLUGIN_SHA256
+RUN test -n "${CROWDSEC_BOUNCER_PLUGIN_VERSION}" -a -n "${CROWDSEC_BOUNCER_PLUGIN_SHA256}" \
+    || { echo "build-args requis depuis versions.json : make build, ou docker build \$(scripts/versions-build-args.py --docker) ." >&2; exit 1; }
+
+RUN --mount=type=secret,id=ca-certs,target=/tmp/ca-bundle.crt,required=false \
+    if [ -f /tmp/ca-bundle.crt ]; then \
+      cat /tmp/ca-bundle.crt >> /etc/ssl/certs/ca-certificates.crt; \
+    fi
+
+RUN apk upgrade --no-cache \
+ && apk add --no-cache curl
+
+WORKDIR /src
+RUN curl -fsSL "https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin/archive/refs/tags/v${CROWDSEC_BOUNCER_PLUGIN_VERSION}.tar.gz" -o plugin.tar.gz \
+ && printf '%s  plugin.tar.gz\n' "${CROWDSEC_BOUNCER_PLUGIN_SHA256}" > plugin.sha256 \
+ && sha256sum -c plugin.sha256 \
+ && mkdir -p src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin \
+ && tar -xzf plugin.tar.gz --strip-components=1 -C src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin \
+ && rm plugin.tar.gz plugin.sha256
+
+# Yaegi n'INTERPRETE que le code : ni les tests, ni les exemples, ni
+# l'outillage amont n'entrent dans l'image. `.traefik.yml` EST lu au
+# demarrage (le manifeste du plugin) : sans lui Traefik refuse avec
+# « failed to open the plugin manifest » -- prouve en rouge le 2026-11-04 sur
+# l'image sans cette stage. `vendor/` reste : go.mod declare deux modules
+# tiers (golang-ttl-map, simpleredis) que Yaegi resout depuis ce
+# repertoire, jamais depuis le reseau.
+WORKDIR /src/src/github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+RUN rm -rf examples .github tests .assets docker-compose.yml docker-compose.local.yml \
+      Makefile .golangci.yml .gitignore README.md acquis.yaml ban.html captcha.html bouncer_test.go \
+ && find pkg -name '*_test.go' -delete \
+ && test -s .traefik.yml \
+ && test -s bouncer.go \
+ && test -d vendor/github.com/maxlerebourg/simpleredis
+
+# ---------------------------------------------------------------------
 #  web : dashboard construit depuis les sources du tag
 # ---------------------------------------------------------------------
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS web
@@ -258,6 +314,12 @@ COPY --link --from=prep-clean /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --link --from=prep-clean /usr/share/zoneinfo/ /usr/share/zoneinfo/
 COPY --link --from=prep-clean /sbin/tini-static /sbin/tini
 COPY --link --from=gobuilder /init /usr/local/bin/init
+# Source du plugin CrowdSec (Yaegi, experimental.localPlugins) : lue en
+# ./plugins-local/src/<moduleName> relatif au repertoire de travail, qui
+# reste / (WORKDIR ci-dessous). Chemin confirme par l'erreur exacte de
+# Traefik quand ce repertoire manque : « failed to open the plugin
+# manifest plugins-local/src/.../.traefik.yml ».
+COPY --link --from=plugin /src/src/ /plugins-local/src/
 
 RUN ["/usr/local/bin/init", "--setup-dirs"]
 
