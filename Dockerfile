@@ -24,7 +24,7 @@ ARG TRAEFIK_SHA256
 # ---------------------------------------------------------------------
 #  fetch : archive source verifiee, dashboard prefabrique jete
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS fetch
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS fetch
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TRAEFIK_VERSION
 ARG TRAEFIK_SHA256
@@ -77,7 +77,7 @@ RUN test -s traefik/webui/static/index.html \
 #  binaire Traefik lui-meme -- l'amont ne publie ni signature ni somme pour
 #  cette archive non plus.
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS plugin
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS plugin
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG CROWDSEC_BOUNCER_PLUGIN_VERSION
 ARG CROWDSEC_BOUNCER_PLUGIN_SHA256
@@ -118,7 +118,7 @@ RUN rm -rf examples .github tests .assets docker-compose.yml docker-compose.loca
 # ---------------------------------------------------------------------
 #  web : dashboard construit depuis les sources du tag
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS web
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS web
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 RUN --mount=type=secret,id=ca-certs,target=/tmp/ca-bundle.crt,required=false \
     if [ -f /tmp/ca-bundle.crt ]; then \
@@ -183,7 +183,7 @@ RUN if [ -n "${HTTP_PROXY:-}" ]; then export YARN_HTTP_PROXY="${HTTP_PROXY}"; fi
 #  dans une image qui n'a aujourd'hui AUCUNE bibliotheque -- un plus mauvais
 #  echange que l'ASLR gagnee. Le binaire reste statique, comme chez l'amont.
 # ---------------------------------------------------------------------
-FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
+FROM golang:1.27-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TRAEFIK_VERSION
 RUN test -n "${TRAEFIK_VERSION}" \
@@ -260,7 +260,7 @@ RUN /tmp/overrides/go-overrides-apply.sh verify /tmp/overrides/go-overrides.json
 # ---------------------------------------------------------------------
 #  gobuilder : init statique (entrypoint, healthcheck, setup-dirs)
 # ---------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS gobuilder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS gobuilder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /build
@@ -271,7 +271,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags
 #  prep : utilisateur, autorites, fuseaux -- et les assertions sur le binaire
 #  Le gabarit build-push construit et scanne ce stage a part (Trivy, SBOM).
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS prep
+FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS prep
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # Rien de plus que ce que l'image finale emporte : ce stage est celui que la
 # CI scanne (Trivy, SBOM attestee), et chaque paquet de plus y ajoute des CVE
