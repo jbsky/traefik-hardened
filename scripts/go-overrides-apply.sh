@@ -28,15 +28,24 @@ version_de() { jq -r --arg k "$1" '.[$k].version' "$file"; }
 # Tri de version simple (X.Y.Z, sans "v") : suffisant quand les deux membres
 # viennent de go-cve-autofix.js (semver strict -- cf. son parseSemver). Une
 # entree posee a la main pour un correctif en pseudo-version Go (issue
-# [go-cve], ex. knative.dev/pkg) n'est PAS comparee correctement ici : les
-# trois champs numeriques valent "0.0.0" pour toute pseudo-version sans tag
-# anterieur, donc le tri les trouve a egalite et ne depart que par l'ordre
-# d'entree (stable) -- qui renvoie toujours le second argument. Fonctionne
-# seulement parce que ce script appelle toujours plus_recente(actuelle, cible),
-# jamais l'inverse : une future majoration de l'amont au-dela de la cible ne
-# serait PAS detectee comme rendant l'override inutile (pas de retrogradation
-# ici, mais la garde qui l'evite ailleurs ne vaut rien sur ce cas). A retirer
-# a la main si l'amont depasse un jour la pseudo-version forcee.
+# [go-cve], ex. knative.dev/pkg) met les trois champs numeriques a egalite
+# ("0.0.0" pour toute pseudo-version sans tag anterieur) : `sort` ne tranche
+# alors QUE par comparaison de la ligne entiere (comportement par defaut de
+# GNU coreutils ET de BusyBox sans `-s`, verifie ici dans les deux sens
+# d'arguments, sur le host et dans golang:1.27-alpine -- v1.37.0). Le
+# suffixe horodate sur 14 chiffres (YYYYMMDDHHMMSS) se compare alors
+# correctement comme une chaine, dans les deux ordres d'appel : ce cas
+# precis (deux pseudo-versions `0.0.0-<timestamp>-<hash>`) marche.
+#
+# Ce qui ne marcherait PAS : comparer une pseudo-version a une VRAIE version
+# taguee qui partage le meme X.Y.Z (ex. "1.2.4" contre
+# "1.2.4-0.<timestamp>-<hash>", le format Go pour un commit post-"1.2.4").
+# "1.2.4" est alors un prefixe strict de l'autre chaine -- la comparaison de
+# ligne la classe toujours plus petite, meme si le commit qu'elle designe
+# est anterieur. Aucune des deux entrees actuelles de ce fichier n'est dans
+# ce cas (go-jose : semver contre semver ; knative.dev/pkg : pseudo contre
+# pseudo), donc rien a corriger ici pour l'instant -- juste a surveiller si
+# un prochain override pseudo-version apparait a cote d'un tag reel.
 plus_recente() {
     printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1
 }
