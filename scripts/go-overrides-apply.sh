@@ -25,9 +25,18 @@ file="${2:?go-overrides.json requis}"
 cles() { jq -r 'keys[]' "$file"; }
 version_de() { jq -r --arg k "$1" '.[$k].version' "$file"; }
 
-# Tri de version simple (X.Y.Z, sans "v") : suffisant, les deux membres
-# viennent toujours de go-cve-autofix.js (semver strict, jamais une
-# pseudo-version -- cf. son parseSemver).
+# Tri de version simple (X.Y.Z, sans "v") : suffisant quand les deux membres
+# viennent de go-cve-autofix.js (semver strict -- cf. son parseSemver). Une
+# entree posee a la main pour un correctif en pseudo-version Go (issue
+# [go-cve], ex. knative.dev/pkg) n'est PAS comparee correctement ici : les
+# trois champs numeriques valent "0.0.0" pour toute pseudo-version sans tag
+# anterieur, donc le tri les trouve a egalite et ne depart que par l'ordre
+# d'entree (stable) -- qui renvoie toujours le second argument. Fonctionne
+# seulement parce que ce script appelle toujours plus_recente(actuelle, cible),
+# jamais l'inverse : une future majoration de l'amont au-dela de la cible ne
+# serait PAS detectee comme rendant l'override inutile (pas de retrogradation
+# ici, mais la garde qui l'evite ailleurs ne vaut rien sur ce cas). A retirer
+# a la main si l'amont depasse un jour la pseudo-version forcee.
 plus_recente() {
     printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1
 }

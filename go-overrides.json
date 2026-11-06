@@ -4,5 +4,11 @@
         "fixes": [
             "CVE-2026-116587"
         ]
+    },
+    "knative.dev/pkg": {
+        "version": "0.0.0-20260531000007-52dbd5ece63f",
+        "fixes": [
+            "GHSA-2hw4-c9m4-f2fj"
+        ]
     }
 }
