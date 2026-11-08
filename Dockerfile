@@ -24,7 +24,7 @@ ARG TRAEFIK_SHA256
 # ---------------------------------------------------------------------
 #  fetch : archive source verifiee, dashboard prefabrique jete
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS fetch
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS fetch
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TRAEFIK_VERSION
 ARG TRAEFIK_SHA256
@@ -77,7 +77,7 @@ RUN test -s traefik/webui/static/index.html \
 #  binaire Traefik lui-meme -- l'amont ne publie ni signature ni somme pour
 #  cette archive non plus.
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS plugin
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS plugin
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG CROWDSEC_BOUNCER_PLUGIN_VERSION
 ARG CROWDSEC_BOUNCER_PLUGIN_SHA256
@@ -118,7 +118,7 @@ RUN rm -rf examples .github tests .assets docker-compose.yml docker-compose.loca
 # ---------------------------------------------------------------------
 #  web : dashboard construit depuis les sources du tag
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS web
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS web
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 RUN --mount=type=secret,id=ca-certs,target=/tmp/ca-bundle.crt,required=false \
     if [ -f /tmp/ca-bundle.crt ]; then \
@@ -271,7 +271,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags
 #  prep : utilisateur, autorites, fuseaux -- et les assertions sur le binaire
 #  Le gabarit build-push construit et scanne ce stage a part (Trivy, SBOM).
 # ---------------------------------------------------------------------
-FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a AS prep
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS prep
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 # Rien de plus que ce que l'image finale emporte : ce stage est celui que la
 # CI scanne (Trivy, SBOM attestee), et chaque paquet de plus y ajoute des CVE
