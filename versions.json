@@ -1,6 +1,6 @@
 {
-  "traefik": "3.7.18",
-  "traefik_sha256": "d7e6c551bab6fdba4f1afc22945a1671f4cffcd42e3cd093da7e1a727f03df1f",
+  "traefik": "3.7.19",
+  "traefik_sha256": "94212099d79321aa28b8cf44a69dab0e54b008518d65356dc1db294554edabde",
   "crowdsec_bouncer_plugin": "1.3.5",
   "crowdsec_bouncer_plugin_sha256": "6471e9aeb5f8f656e59471d8d97f843220a3119e281032eab4afbab23a6d7c87",
   "alpine": "3.24"
