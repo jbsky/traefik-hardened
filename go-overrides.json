@@ -5,6 +5,12 @@
             "CVE-2026-116587"
         ]
     },
+    "go.opentelemetry.io/otel/sdk/log": {
+        "version": "1.47.0",
+        "fixes": [
+            "CVE-2026-128085"
+        ]
+    },
     "knative.dev/pkg": {
         "version": "0.0.0-20260531000007-52dbd5ece63f",
         "fixes": [
