@@ -37,6 +37,18 @@ test("pickFix refuse de sauter de majeure", () => {
     assert.strictEqual(pickFix("v4.1.5", "5.0.0"), null);
 });
 
+// Semantic Import Versioning : v0 et v1 partagent le MEME chemin d'import,
+// seules les majeures >= 2 portent un suffixe /vN (issue #23,
+// go.opentelemetry.io/otel/sdk/log v0.22.0 -> 1.47.0).
+test("pickFix accepte v0 -> v1 (meme chemin d'import Go)", () => {
+    assert.strictEqual(pickFix("v0.22.0", "1.47.0"), "1.47.0");
+});
+
+test("pickFix refuse toujours v1 -> v2 (chemin /v2 different)", () => {
+    assert.strictEqual(pickFix("v1.9.0", "2.0.0"), null);
+    assert.strictEqual(pickFix("v0.22.0", "2.0.0"), null);
+});
+
 test("pickFix refuse si l'installe n'est pas un semver strict", () => {
     assert.strictEqual(pickFix("v0.0.0-20251216153728-9c8140b780d1", "0.0.0-20260531000007-52dbd5ece63f"), null);
 });
