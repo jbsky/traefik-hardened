@@ -1,61 +1,79 @@
 # Traefik Hardened
 
-Traefik compile depuis les sources, dans une image `FROM scratch` : ni shell, ni
-gestionnaire de paquets, ni OS -- et **aucune bibliotheque partagee**, le binaire
-etant statique. Uniquement Traefik, son dashboard, les autorites de
-certification, les fuseaux horaires, `tini` et un init Go statique.
+[![Build](https://github.com/jbsky/traefik-hardened/actions/workflows/build-push.yml/badge.svg)](https://github.com/jbsky/traefik-hardened/actions/workflows/build-push.yml)
+[![Docker Hub](https://img.shields.io/docker/v/jbsky/traefik-hardened?sort=semver&label=Docker%20Hub)](https://hub.docker.com/r/jbsky/traefik-hardened)
+[![Hardening](https://img.shields.io/badge/hardening-platine-blueviolet)](https://github.com/jbsky/traefik-hardened#hardening)
 
-| | Image officielle `traefik:3.x` | Cette image |
+Traefik <!--v:traefik-hardened-->3.7.19<!--/v--> built from source, in a `FROM scratch`
+image: no shell, no package manager, no OS -- and **no shared library**, the
+binary being static. Only Traefik, its dashboard, the CrowdSec bouncer plugin,
+the certificate authorities, the time zones, `tini` and a static Go init.
+
+| | Official `traefik:3.x` image | This image |
 |---|---|---|
-| Base | Alpine complete (busybox, ~1 600 fichiers) | `scratch` (le binaire, les autorites, les fuseaux, tini, l'init) |
-| Utilisateur | `root` | `65532:65532` |
-| Shell | `/bin/sh`, busybox | aucun |
-| Bibliotheques partagees | musl, zlib... | aucune (binaire statique) |
-| Dashboard | artefact de la chaine de release | **reconstruit** depuis les sources du tag |
-| PID 1 | `entrypoint.sh` | `tini` statique |
-| Provenance | -- | cosign (keyless), SBOM attestee, SLSA |
+| Base | full Alpine (busybox, ~1,600 files) | `scratch` (the binary, the CAs, the time zones, tini, the init) |
+| User | `root` | `65532:65532` |
+| Shell | `/bin/sh`, busybox | none |
+| Shared libraries | musl, zlib... | none (static binary) |
+| Dashboard | artifact of the release pipeline | **rebuilt** from the tag's sources |
+| PID 1 | `entrypoint.sh` | static `tini` |
+| Provenance | -- | cosign (keyless), attested SBOM, SLSA |
 
-## Ce qui est construit, et depuis quoi
+## What is built
 
-- **Traefik** : archive source du tag
-  (`traefik-v<version>.src.tar.gz`), verifiee par son `sha256` epingle dans
-  [`versions.json`](versions.json) -- l'amont ne publie de sommes que pour ses
-  binaires, pas pour cette archive. Compilation `CGO_ENABLED=0`, `-trimpath`,
-  `-ldflags "-s -w"`, `GOTOOLCHAIN=local`, `-mod=readonly` (l'integrite des
-  modules vient de `go.sum` et de `sum.golang.org`).
-- **Dashboard** : l'archive « source » de l'amont embarque un `webui/static`
-  **deja construit**. Il est supprime, puis refabrique par `vite` depuis les
-  sources TypeScript du meme tag, avec yarn a la version que l'amont epingle
-  dans son champ `packageManager`. Sans ce stage, `//go:embed static`
-  n'embarquerait rien.
-- **Pas de `-buildmode=pie`** : mesure faite sur `golang:1.27-alpine`, meme avec
-  `-linkmode=internal`, Go produit pour `linux/amd64` un PIE **avec
-  interpreteur** (`/lib/ld-musl-x86_64.so.1`). Il faudrait embarquer un chargeur
-  et une libc dans une image qui n'en a aucun : un plus mauvais echange que
-  l'ASLR gagnee. Le build echoue si le binaire n'est pas statique.
+- **Traefik**: the tag's source archive (`traefik-v<version>.src.tar.gz`),
+  verified against its `sha256` pinned in [`versions.json`](versions.json) --
+  upstream only publishes checksums for its binaries, not for this archive.
+  Built with `CGO_ENABLED=0`, `-trimpath`, `-ldflags "-s -w"`,
+  `GOTOOLCHAIN=local`, `-mod=readonly` (module integrity comes from `go.sum`
+  and `sum.golang.org`).
+- **Dashboard**: upstream's "source" archive ships an **already built**
+  `webui/static`. It is deleted, then rebuilt by `vite` from the TypeScript
+  sources of the same tag, with yarn at the version upstream pins in its
+  `packageManager` field. Without this stage, `//go:embed static` would embed
+  nothing.
+- **CrowdSec bouncer plugin**: the source of
+  [crowdsec-bouncer-traefik-plugin](https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin),
+  sha256-verified, is copied under `/plugins-local/src/` and loaded through
+  `experimental.localPlugins`: no download at startup, unlike
+  `experimental.plugins`, which fetches the remote catalog on every start.
+- **Go security overrides**: a CVE in a module vendored by upstream is fixed
+  by forcing the fixed version at build time (`go get`, integrity through
+  `go.sum`), listed in [`go-overrides.json`](go-overrides.json) and checked
+  after the build with `go version -m`; see [`SECURITY.md`](SECURITY.md).
+- **No `-buildmode=pie`**: measured on `golang:1.27-alpine`, even with
+  `-linkmode=internal`, Go produces for `linux/amd64` a PIE **with an
+  interpreter** (`/lib/ld-musl-x86_64.so.1`). It would mean shipping a loader
+  and a libc in an image that has neither: a worse trade than the ASLR gained.
+  The build fails if the binary is not static.
 
 ## Hardening
 
-- `FROM scratch`, utilisateur non-root `65532:65532`, aucune capacite requise.
-- Rootfs en lecture seule : il suffit de monter `/tmp`, `/data` et
-  `/plugins-storage` (tmpfs ou volume).
-- Aucune configuration statique livree, volontairement : Traefik lit
-  `/etc/traefik/traefik.yml` tout seul s'il existe, et un fichier embarque se
-  melerait en silence aux arguments de la ligne de commande.
-- L'init remplace l'`entrypoint.sh` de l'amont : il ajoute `traefik` devant une
-  liste d'arguments qui commence par `-` (ce que fait un chart Helm, qui ne fixe
-  que `args:`), et il **dit** pourquoi un plugin echouerait quand
-  `/plugins-storage` n'est pas inscriptible, au lieu de laisser une pile Go.
-- Chaque build verifie : binaire statique, version du binaire = version du tag,
-  dashboard non vide, aucun shell, aucune bibliotheque partagee
-  ([`scripts/test.sh`](scripts/test.sh)).
+Tier **platine** (OCI label `security.hardening.tier`): a `FROM scratch` image
+with no shell and no package manager, a non-root user, a static Go init behind
+`tini` as PID 1, and binaries built with hardening flags.
+
+- Non-root user `65532:65532`, no capability required.
+- Read-only rootfs: only `/tmp`, `/data` and `/plugins-storage` need to be
+  mounted (tmpfs or volume).
+- No static configuration shipped, on purpose: Traefik reads
+  `/etc/traefik/traefik.yml` on its own when it exists, and an embedded file
+  would silently mix with the command-line arguments.
+- The init replaces upstream's `entrypoint.sh`: it puts `traefik` in front of
+  an argument list that starts with `-` (what a Helm chart does when it only
+  sets `args:`), and it **says** why a plugin would fail when
+  `/plugins-storage` is not writable, instead of leaving a Go stack trace.
+- Every build checks: static binary, binary version = tag version, non-empty
+  dashboard, no shell, no shared library ([`scripts/test.sh`](scripts/test.sh)).
 
 ## Tags
 
-Trois tags par image : `latest` (dernier build de `main`), la version amont
-seule, et la version amont suffixee d'un **compteur de revision**. Les deux
-premiers sont **reecrits en place** a chaque rebuild. **En production, epinglez
-le tag qui porte le compteur.**
+Every image is published under three tags: `latest` (last build of `main`),
+the upstream version alone, and the upstream version followed by a **revision
+counter**. The first two are **overwritten in place** on every rebuild (Alpine
+update, CVE fix, configuration change), and the build they pointed to can no
+longer be pulled by them. **In production, pin the tag that carries the
+counter.**
 
 <!-- BEGIN:tags (genere par la CI -- ne pas editer a la main) -->
 | Image | Version amont | Tag immuable a epingler |
@@ -63,10 +81,21 @@ le tag qui porte le compteur.**
 | `jbsky/traefik-hardened` | `3.7.19` | `3.7.19.3` |
 <!-- END:tags -->
 
-Le compteur compte les commits qui touchent les entrees de l'image
-(`Dockerfile`, `init.go`, `go.mod`, `versions.json`) et repart a zero a chaque
-nouvelle version de Traefik. `docker.io` et `ghcr.io` publient les memes tags
-avec le meme digest.
+This table, the versions quoted in the text and the tags in the examples are
+rendered by `update-readme-tags.sh` ([hardened-ci](https://github.com/jbsky/hardened-ci))
+after each publication: do not edit them by hand.
+
+The counter counts the commits that touch the image inputs (the `revision`
+list of [`.github/hardened-ci.json`](.github/hardened-ci.json)) since the last
+upstream version change, and restarts at `0` with each new upstream version. A
+commit that only touches `.github/` does not increment it.
+
+`docker.io` and `ghcr.io` publish the same tags with the same digest, for
+`linux/amd64`. Each registry keeps the last six immutable tags of an image, so
+that superseded builds do not stay pullable: move your pin forward.
+
+`version-watch` checks upstream daily, bumps `versions.json` (archive sha256
+recomputed in the same commit) and republishes, with no manual step.
 
 ## Usage
 
@@ -79,59 +108,91 @@ docker run -d --name traefik \
   --tmpfs /plugins-storage:mode=0750,uid=65532,gid=65532 \
   -v ./conf:/etc/traefik:ro \
   -p 80:80 -p 443:443 \
-  jbsky/traefik-hardened:latest \
+  jbsky/traefik-hardened:3.7.19.3 \
   traefik --configFile=/etc/traefik/traefik.yml
 ```
 
-- **Ports privilegies** : aucune capacite n'est necessaire sous Kubernetes ni
-  sous Docker, qui ouvrent les ports a partir de 0 pour les utilisateurs non
-  privilegies (`net.ipv4.ip_unprivileged_port_start=0` dans le conteneur). Sous
-  un moteur qui ne le fait pas, accorder `NET_BIND_SERVICE` au conteneur -- pas
-  au binaire.
-- **Arguments** : `--entryPoints.web.address=:80` & co. peuvent etre passes sans
-  le nom du binaire, l'init ajoute `traefik` devant.
-- **Healthcheck** : `GET http://127.0.0.1:8080/ping`, donc la configuration doit
-  activer `ping` sur un entryPoint a `:8080` (ou pointer ailleurs avec
-  `TRAEFIK_HEALTH_URL`). Sous Kubernetes, ce sont les sondes du pod qui comptent.
-- **Plugins** (Yaegi) : ils sont telecharges puis decompresses sous
-  `./plugins-storage` relatif au repertoire de travail, qui reste `/`. En
-  lecture seule, monter un volume inscriptible sur `/plugins-storage`.
-- **Fichiers montes** (certificats compris) : lisibles par l'uid `65532`
-  (`chgrp 65532` + `chmod 640` sur les cles plutot qu'un `644`).
+- **Privileged ports**: no capability is needed under Kubernetes or Docker,
+  which open ports from 0 to unprivileged users
+  (`net.ipv4.ip_unprivileged_port_start=0` inside the container). Under an
+  engine that does not, grant `NET_BIND_SERVICE` to the container -- not to
+  the binary.
+- **Arguments**: `--entryPoints.web.address=:80` and the like can be passed
+  without the binary name; the init puts `traefik` in front.
+- **Healthcheck**: `GET http://127.0.0.1:8080/ping`, so the configuration must
+  enable `ping` on an entryPoint at `:8080` (or point elsewhere with
+  `TRAEFIK_HEALTH_URL`). Under Kubernetes, the pod probes are what count.
+- **CrowdSec bouncer**: declare it under `experimental.localPlugins` with
+  `moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin`; it
+  loads without network.
+- **Remote plugins** (Yaegi, `experimental.plugins`): they are downloaded then
+  unpacked under `./plugins-storage` relative to the working directory, which
+  stays `/`. On a read-only rootfs, mount a writable volume on
+  `/plugins-storage`.
+- **Mounted files** (certificates included): readable by uid `65532`
+  (`chgrp 65532` + `chmod 640` on keys rather than `644`).
 
-Exemple de configuration et de composition : [`conf/`](conf) et
-[`docker-compose.yml`](docker-compose.yml) -- essais, pas un deploiement.
+Example configuration and compose file: [`conf/`](conf) and
+[`docker-compose.yml`](docker-compose.yml) -- for trials, not a deployment.
 
-## Security & Verification
-
-Image signee par [cosign](https://github.com/sigstore/cosign) (keyless OIDC).
+## Build and test
 
 ```bash
-cosign verify \
-  --certificate-identity-regexp '^https://github.com/(jbsky/traefik-hardened|jbsky/hardened-ci)/' \
-  --certificate-github-workflow-repository jbsky/traefik-hardened \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/jbsky/traefik-hardened:latest
-
-COSIGN_REPOSITORY=ghcr.io/jbsky/traefik-hardened \
-  cosign verify \
-  --certificate-identity-regexp '^https://github.com/(jbsky/traefik-hardened|jbsky/hardened-ci)/' \
-  --certificate-github-workflow-repository jbsky/traefik-hardened \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  docker.io/jbsky/traefik-hardened:latest
+make build   # build args come from versions.json
+make test    # scripts/test.sh against the built image
+make check   # versions.json is the only place a version is written
 ```
 
-La chaine de CI vient de [jbsky/hardened-ci](https://github.com/jbsky/hardened-ci) :
-lint, build, scan CVE du stage `prep`, tests sur le digest exact (manifeste
-d'image, cloture, `scripts/test.sh`), signature, SBOM attestee, audit
-hebdomadaire. La veille de versions (`version-watch.yml`) **signale** une
-version amont plus recente sans la poser : ce que publie ce depot finit devant
-tous les services, donc une montee se lit et se deploie a la main.
+`scripts/test.sh` runs the image as in production (read-only rootfs, no
+capability, `no-new-privileges`, uid `65532`, tmpfs volumes, configuration
+mounted read-only) and checks the healthcheck, the version reported by the
+API, the embedded dashboard, a full entryPoint -> router -> service route, a
+real TLS termination, the absence of shell and shared libraries, that a broken
+configuration **prevents** the start, the init's message when plugins cannot
+be stored, and the CrowdSec bouncer loading with no network at all.
+
+Versions live only in [`versions.json`](versions.json): the Dockerfile has no
+defaults, `make build` and CI pass them through `scripts/versions-build-args.py`,
+and a bare `docker build` stops at the guard.
+
+## Verification
+
+Images are signed with [cosign](https://github.com/sigstore/cosign) (keyless,
+GitHub OIDC) by the shared [hardened-ci](https://github.com/jbsky/hardened-ci)
+pipeline. The certificate names that workflow and, in an extension, this
+repository: the commands below require both.
+
+```bash
+# ghcr.io
+cosign verify ghcr.io/jbsky/traefik-hardened:3.7.19.3 \
+  --certificate-identity-regexp '^https://github.com/(jbsky/traefik-hardened|jbsky/hardened-ci)/' \
+  --certificate-github-workflow-repository jbsky/traefik-hardened \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# Docker Hub (the signature is stored on ghcr.io)
+COSIGN_REPOSITORY=ghcr.io/jbsky/traefik-hardened \
+  cosign verify docker.io/jbsky/traefik-hardened:3.7.19.3 \
+  --certificate-identity-regexp '^https://github.com/(jbsky/traefik-hardened|jbsky/hardened-ci)/' \
+  --certificate-github-workflow-repository jbsky/traefik-hardened \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Each published digest also carries a CycloneDX SBOM (the `prep` stage the
+image is assembled from, plus its Go binaries), attested with cosign, and a
+GitHub SLSA build provenance attestation. The pipeline lints, builds, scans the
+`prep` stage with Trivy, tests the exact digest it is about to publish (image
+manifest, dependency closure, functional tests), then promotes and signs it.
+Base image digests follow upstream daily (`base-watch`), a fixable Alpine
+package CVE triggers a rebuild (`cve-watch`), and the published image is
+audited weekly (`security-audit`: Trivy, Grype, cosign). Audit status and
+documented exceptions: [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Le contenu de ce depot -- Dockerfile, `init.go`, scripts et chaine CI -- est sous
-**Apache-2.0**, voir [`LICENSE`](LICENSE). Copyright 2026 jbsky.
+The contents of this repository (Dockerfile, `init.go`, scripts and CI) are
+licensed under **Apache-2.0**, see [`LICENSE`](LICENSE). Copyright 2026 jbsky.
 
-Traefik garde sa licence, **MIT**. `init.go` est un programme distinct, qui
-execute Traefik sans etre lie a lui.
+The software shipped in the image keeps its own license: **Traefik is under
+MIT**, and the CrowdSec bouncer plugin under Apache-2.0. The two never mix:
+`init.go` is a separate program that executes Traefik without being linked to
+it.
