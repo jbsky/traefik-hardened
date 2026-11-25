@@ -33,6 +33,14 @@ test("pickFix retient le plus bas correctif de la MEME majeure", () => {
     assert.strictEqual(pickFix("v4.1.5", "5.0.0, 4.1.6"), "4.1.6");
 });
 
+// Un avis qui couvre plusieurs branches liste un correctif PAR branche
+// (GO-2026-6107 : 3.5.33, 3.6.14, 3.7.1) : le plus bas de la majeure est
+// alors une RETROGRADATION sous l'installe -- jamais un correctif.
+test("pickFix ignore les correctifs des branches inferieures a l'installe", () => {
+    assert.strictEqual(pickFix("v3.7.0", "3.5.33, 3.6.14, 3.7.1"), "3.7.1");
+    assert.strictEqual(pickFix("v3.7.0", "3.5.33, 3.6.14"), null);
+});
+
 test("pickFix refuse de sauter de majeure", () => {
     assert.strictEqual(pickFix("v4.1.5", "5.0.0"), null);
 });
