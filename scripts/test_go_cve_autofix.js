@@ -5,7 +5,8 @@
 "use strict";
 const assert = require("node:assert");
 const {
-    decide, pickFix, cmp, major, parseSemver, groupByModule, applyOverride, jetonSur,
+    decide, pickFix, cmp, major, parseSemver, groupByModule, groupByModuleGrype, fusionner,
+    applyOverride, jetonSur,
 } = require("./go-cve-autofix.js");
 
 let n = 0;
@@ -31,6 +32,14 @@ test("major lit le premier segment", () => {
 test("pickFix retient le plus bas correctif de la MEME majeure", () => {
     assert.strictEqual(pickFix("v4.1.5", "4.1.6"), "4.1.6");
     assert.strictEqual(pickFix("v4.1.5", "5.0.0, 4.1.6"), "4.1.6");
+});
+
+// Un avis qui couvre plusieurs branches liste un correctif PAR branche
+// (GO-2026-6107 : 3.5.33, 3.6.14, 3.7.1) : le plus bas de la majeure est
+// alors une RETROGRADATION sous l'installe -- jamais un correctif.
+test("pickFix ignore les correctifs des branches inferieures a l'installe", () => {
+    assert.strictEqual(pickFix("v3.7.0", "3.5.33, 3.6.14, 3.7.1"), "3.7.1");
+    assert.strictEqual(pickFix("v3.7.0", "3.5.33, 3.6.14"), null);
 });
 
 test("pickFix refuse de sauter de majeure", () => {
@@ -122,6 +131,65 @@ test("groupByModule regroupe plusieurs CVE sur le meme module", () => {
     };
     const g = groupByModule(rapport, "usr/local/bin/traefik", "github.com/traefik/traefik/v3");
     assert.deepStrictEqual(g["example.com/mod"].ids, ["CVE-A", "CVE-B"]);
+});
+
+// Grype (security-audit) et Trivy (cette veille) ne lisent pas la meme base :
+// le 2026-11-24, l'audit a vu GO-2026-6107 (go.etcd.io/etcd/client/pkg/v3
+// v3.7.0, corrige en 3.7.1, issue #34) que Trivy ignore -- la veille disait
+// "aucune CVE de module Go". Extrait reel de grype 0.110.0 -o json.
+const GRYPE_ETCD = {
+    matches: [
+        {
+            vulnerability: {
+                id: "GO-2026-6107", severity: "High",
+                fix: { versions: ["3.5.33", "3.6.14", "3.7.1"], state: "fixed" },
+            },
+            artifact: {
+                name: "go.etcd.io/etcd/client/pkg/v3", version: "v3.7.0", type: "go-module",
+                locations: [{ path: "/usr/local/bin/traefik" }],
+            },
+        },
+        {
+            vulnerability: { id: "GO-2026-0001", severity: "High", fix: { versions: ["1.27.9"], state: "fixed" } },
+            artifact: { name: "stdlib", version: "go1.27.3", type: "go-module", locations: [{ path: "/usr/local/bin/traefik" }] },
+        },
+        {
+            vulnerability: { id: "GO-2026-0002", severity: "High", fix: { versions: ["4.1.6"], state: "fixed" } },
+            artifact: { name: "github.com/go-jose/go-jose/v4", version: "v4.1.5", type: "go-module", locations: [{ path: "/usr/local/bin/init" }] },
+        },
+        {
+            vulnerability: { id: "GO-2026-0003", severity: "High", fix: { versions: [], state: "not-fixed" } },
+            artifact: { name: "example.com/sans-fix", version: "v1.0.0", type: "go-module", locations: [{ path: "/usr/local/bin/traefik" }] },
+        },
+        {
+            vulnerability: { id: "GO-2026-0004", severity: "Low", fix: { versions: ["1.0.1"], state: "fixed" } },
+            artifact: { name: "example.com/faible", version: "v1.0.0", type: "go-module", locations: [{ path: "/usr/local/bin/traefik" }] },
+        },
+    ],
+};
+
+test("groupByModuleGrype lit le binaire traefik, hors stdlib, autre binaire, sans fix et Low", () => {
+    const g = groupByModuleGrype(GRYPE_ETCD, "usr/local/bin/traefik", "github.com/traefik/traefik/v3");
+    assert.deepStrictEqual(Object.keys(g), ["go.etcd.io/etcd/client/pkg/v3"]);
+    assert.strictEqual(g["go.etcd.io/etcd/client/pkg/v3"].installedVersion, "v3.7.0");
+    assert.deepStrictEqual(g["go.etcd.io/etcd/client/pkg/v3"].ids, ["GO-2026-6107"]);
+});
+
+test("GO-2026-6107 vu par Grype seul donne l'override 3.7.1", () => {
+    const g = fusionner({}, groupByModuleGrype(GRYPE_ETCD, "usr/local/bin/traefik", "github.com/traefik/traefik/v3"));
+    const e = g["go.etcd.io/etcd/client/pkg/v3"];
+    const d = decide({ installedVersion: e.installedVersion, fixedVersionsCsv: e.fixedVersionsCsv, overrideVersion: null });
+    assert.deepStrictEqual(d, { action: "override", version: "3.7.1" });
+});
+
+test("fusionner reunit les ids d'un module vu par les deux scanners", () => {
+    const trivy = { "m": { installedVersion: "v1.0.0", fixedVersionsCsv: "1.0.1", ids: ["CVE-1"] } };
+    const grype = { "m": { installedVersion: "v1.0.0", fixedVersionsCsv: "1.0.1, 1.0.2", ids: ["GO-1", "CVE-1"] },
+                    "n": { installedVersion: "v2.0.0", fixedVersionsCsv: "2.0.1", ids: ["GO-2"] } };
+    const f = fusionner(trivy, grype);
+    assert.deepStrictEqual(f.m.ids, ["CVE-1", "GO-1"]);
+    assert.deepStrictEqual(Object.keys(f).sort(), ["m", "n"]);
+    assert.strictEqual(pickFix(f.m.installedVersion, f.m.fixedVersionsCsv), "1.0.1");
 });
 
 test("applyOverride trie les cles", () => {
