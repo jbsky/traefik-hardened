@@ -1,4 +1,10 @@
 {
+    "go.etcd.io/etcd/client/pkg/v3": {
+        "version": "3.7.1",
+        "fixes": [
+            "GO-2026-6107"
+        ]
+    },
     "go.opentelemetry.io/otel/sdk/log": {
         "version": "1.47.0",
         "fixes": [
